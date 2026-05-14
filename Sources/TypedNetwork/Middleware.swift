@@ -1,21 +1,33 @@
 import Foundation
 
 public protocol Middleware: Sendable {
-    func intercept(_ request: URLRequest) async throws -> URLRequest
+    func intercept(
+        _ request: URLRequest,
+        next: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse)
 }
 
-public struct MiddlewareChain {
-    private let middlewares: [Middleware]
+public struct MiddlewareChain: Sendable {
+    private let middlewares: [any Middleware]
 
-    public init(_ middlewares: [Middleware]) {
+    public init(_ middlewares: [any Middleware]) {
         self.middlewares = middlewares
     }
 
-    func run(_ request: URLRequest) async throws -> URLRequest {
-        var req = request
-        for middleware in middlewares {
-            req = try await middleware.intercept(req)
+    func execute(
+        request: URLRequest,
+        transport: @Sendable @escaping (URLRequest) async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+
+        var current = transport
+
+        for middleware in middlewares.reversed() {
+            let next = current
+            current = { request in
+                try await middleware.intercept(request, next: next)
+            }
         }
-        return req
+
+        return try await current(request)
     }
 }

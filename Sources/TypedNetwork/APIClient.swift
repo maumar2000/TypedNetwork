@@ -5,15 +5,18 @@ actor APIClient {
     private let session: URLSession
     private let builder: RequestBuilder
     private let mockRegistry: MockRegistry?
+    private let middlewares: [any Middleware]
 
     init(
         baseURL: URL,
         session: URLSession = .shared,
-        mockRegistry: MockRegistry? = nil
+        mockRegistry: MockRegistry? = nil,
+        middlewares: [any Middleware] = []
     ) {
         self.session = session
         self.builder = RequestBuilder(baseURL: baseURL)
         self.mockRegistry = mockRegistry
+        self.middlewares = middlewares
     }
 
     func send<E: Endpoint>(_ endpoint: E) async throws -> E.Response {
@@ -23,10 +26,16 @@ actor APIClient {
 
         let request = try builder.build(from: endpoint)
 
-        let (data, urlResponse) = try await session.data(for: request)
+        let chain = MiddlewareChain(middlewares)
 
-        guard let http = urlResponse as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
+        let (data, http) = try await chain.execute(
+            request: request
+        ) { request in
+            let (data, response) = try await self.session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return (data, http)
         }
 
         if (200..<300).contains(http.statusCode) {
