@@ -15,11 +15,17 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "TypedNetwork"
+            name: "TypedNetwork",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
         .testTarget(
             name: "TypedNetworkTests",
-            dependencies: ["TypedNetwork"]
+            dependencies: ["TypedNetwork"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
     ]
 )

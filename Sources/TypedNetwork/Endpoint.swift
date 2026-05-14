@@ -1,14 +1,15 @@
 import Foundation
 
-public protocol Endpoint {
-    associatedtype Response: Decodable
-    associatedtype Failure: Error = Never
+public protocol Endpoint: Sendable {
+    associatedtype Response: Decodable & Sendable
+    associatedtype Failure: Error & Sendable = Never
 
     var path: String { get }
     var method: HTTPMethod { get }
+
     var headers: [String: String] { get }
     var queryItems: [URLQueryItem] { get }
-    var body: Data? { get }
+    var body: HTTPBody? { get }
 
     func mapError(data: Data, response: HTTPURLResponse) -> Failure
 }
@@ -16,7 +17,7 @@ public protocol Endpoint {
 public extension Endpoint {
     var headers: [String: String] { [:] }
     var queryItems: [URLQueryItem] { [] }
-    var body: Data? { nil }
+    var body: HTTPBody? { nil }
 
     func mapError(data: Data, response: HTTPURLResponse) -> Failure {
         fatalError("Implement mapError if Failure != Never")
@@ -28,7 +29,10 @@ public extension Endpoint {
 
         var request = URLRequest(url: components.url!)
         request.httpMethod = method.rawValue
-        request.httpBody = body
+        if let body {
+            request.httpBody = try body.encode()
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
 

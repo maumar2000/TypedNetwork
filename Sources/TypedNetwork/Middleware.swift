@@ -1,6 +1,6 @@
 import Foundation
 
-public protocol Middleware {
+public protocol Middleware: Sendable {
     func intercept(_ request: URLRequest) async throws -> URLRequest
 }
 

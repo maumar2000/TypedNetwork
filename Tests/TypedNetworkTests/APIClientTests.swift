@@ -5,10 +5,11 @@
 //  Created by Mauricio Martinez on 13/5/26.
 //
 
-import XCTest
+import Foundation
+import Testing
 @testable import TypedNetwork
 
-final class APIClientTests: XCTestCase {
+struct APIClientTests {
 
     struct User: Decodable, Equatable {
         let id: Int
@@ -33,9 +34,10 @@ final class APIClientTests: XCTestCase {
         }
     }
 
-    func test_mocked_endpoint_returns_expected_response() async throws {
+    @Test
+    func mocked_endpoint_returns_expected_response() async throws {
         let mock = MockRegistry()
-        mock.register(GetUser.self, response: User(id: 1, name: "Mocked"))
+        await mock.register(GetUser(id: 1), response: User(id: 1, name: "Mocked"))
 
         let client = APIClient(
             baseURL: URL(string: "https://test.com")!,
@@ -44,6 +46,6 @@ final class APIClientTests: XCTestCase {
 
         let user = try await client.send(GetUser(id: 1))
 
-        XCTAssertEqual(user, User(id: 1, name: "Mocked"))
+        #expect(user == User(id: 1, name: "Mocked"))
     }
 }
