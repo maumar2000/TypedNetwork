@@ -1,42 +1,42 @@
 # TypedNetwork
 
-**TypedNetwork** es una librería en Swift que permite construir requests HTTP **fuertemente tipados**, componibles y testeables, inspirada en patrones modernos de networking y pensada para integrarse fácil en apps iOS.
+**TypedNetwork** is a Swift networking library for building **strongly-typed, composable, and testable** HTTP requests, designed to integrate naturally into modern iOS apps.
 
-El objetivo es:
+The goals are:
 
-- Evitar strings sueltos para endpoints
-- Tener requests fuertemente tipados
-- Inyectar middlewares (auth, logging, retry, etc.)
-- Separar construcción de request de su ejecución
-- Facilitar testing sin tocar `URLSession`
-
----
-
-## ✨ Features actuales
-
-- ✅ `Request` fuertemente tipado
-- ✅ `RequestBuilder` para crear requests de forma declarativa
-- ✅ `HTTPSession` desacoplada de `URLSession`
-- ✅ Sistema de `Middleware`
-- ✅ Middleware de Auth de ejemplo
-- ✅ Tests para middlewares
-- ✅ Compatible con Swift Concurrency (`async/await`)
+- Eliminate stringly-typed endpoints
+- Model requests with strong types
+- Inject middlewares (auth, logging, retry, etc.)
+- Separate request construction from execution
+- Make networking easy to test without touching `URLSession`
 
 ---
 
-## 🧱 Arquitectura
+## ✨ Current Features
+
+- ✅ Strongly-typed `Request`
+- ✅ Declarative `RequestBuilder`
+- ✅ `HTTPSession` decoupled from `URLSession`
+- ✅ Middleware system
+- ✅ Example Auth middleware
+- ✅ Middleware unit tests (no network)
+- ✅ Fully compatible with Swift Concurrency (`async/await`)
+
+---
+
+## 🧱 Architecture
 
 ```
 RequestBuilder → Request → Middlewares → HTTPSession → URLSession
 ```
 
-Cada capa tiene una responsabilidad clara.
+Each layer has a single, clear responsibility.
 
 ---
 
-## 🧩 1. Definición de un Request
+## 🧩 1. Defining a Request
 
-Un request define **qué espera devolver**:
+A request defines **what it expects to return**:
 
 ```swift
 struct GetUserRequest: Request {
@@ -49,7 +49,7 @@ struct GetUserRequest: Request {
 
 ---
 
-## 🏗️ 2. Construcción con RequestBuilder
+## 🏗️ 2. Building with RequestBuilder
 
 ```swift
 let request = RequestBuilder(GetUserRequest())
@@ -57,13 +57,13 @@ let request = RequestBuilder(GetUserRequest())
     .build(baseURL: baseURL)
 ```
 
-Esto genera un `URLRequest` completo y tipado.
+This produces a complete, typed `URLRequest`.
 
 ---
 
 ## 🧠 3. HTTPSession
 
-`HTTPSession` es el encargado de ejecutar el request.
+`HTTPSession` is responsible for executing requests.
 
 ```swift
 let session = HTTPSession(baseURL: baseURL)
@@ -71,18 +71,18 @@ let session = HTTPSession(baseURL: baseURL)
 let user: User = try await session.execute(request)
 ```
 
-Internamente:
+Internally it:
 
-1. Construye el `URLRequest`
-2. Pasa por todos los middlewares
-3. Ejecuta el request
-4. Decodifica el response tipado
+1. Builds the `URLRequest`
+2. Passes it through all middlewares
+3. Executes the request
+4. Decodes the typed response
 
 ---
 
 ## 🧪 4. Middlewares
 
-Los middlewares pueden modificar el request antes de enviarlo.
+Middlewares can intercept and modify a request before it is sent.
 
 ```swift
 public protocol Middleware {
@@ -90,7 +90,7 @@ public protocol Middleware {
 }
 ```
 
-Se inyectan en la sesión:
+They are injected into the session:
 
 ```swift
 let session = HTTPSession(
@@ -103,7 +103,7 @@ let session = HTTPSession(
 
 ---
 
-## 🔐 5. AuthMiddleware (ejemplo)
+## 🔐 5. AuthMiddleware Example
 
 ```swift
 final class AuthMiddleware: Middleware {
@@ -124,9 +124,9 @@ final class AuthMiddleware: Middleware {
 
 ---
 
-## 🧪 6. Testing de Middlewares
+## 🧪 6. Testing Middlewares (No Network)
 
-Los middlewares se testean **sin red**.
+Middlewares are tested without performing real network calls.
 
 ```swift
 func test_authMiddleware_addsAuthorizationHeader() async throws {
@@ -145,18 +145,18 @@ func test_authMiddleware_addsAuthorizationHeader() async throws {
 
 ---
 
-## 🧱 7. Separación clave
+## 🧱 7. Clear Separation of Responsibilities
 
-| Capa            | Responsabilidad                      |
-|-----------------|--------------------------------------|
-| `Request`       | Define endpoint y response tipado    |
-| `RequestBuilder`| Construye el `URLRequest`           |
-| `Middleware`    | Modifica/intercepta requests         |
-| `HTTPSession`   | Ejecuta requests                    |
+| Layer           | Responsibility                          |
+|-----------------|------------------------------------------|
+| `Request`       | Defines endpoint and typed response      |
+| `RequestBuilder`| Builds the `URLRequest`                 |
+| `Middleware`    | Intercepts/modifies requests             |
+| `HTTPSession`   | Executes requests                       |
 
 ---
 
-## 🚀 Ejemplo completo
+## 🚀 Complete Example
 
 ```swift
 let session = HTTPSession(
@@ -175,27 +175,27 @@ let user: User = try await session.execute(request)
 
 ---
 
-## 📌 Qué viene después
+## 📌 What’s Next
 
-Siguientes mejoras naturales:
+Natural next improvements:
 
 - [ ] RetryMiddleware
 - [ ] LoggingMiddleware
 - [ ] CacheMiddleware
-- [ ] Support para body encodable
-- [ ] Soporte para headers en builder
-- [ ] MockHTTPSession para tests de requests completos
+- [ ] Encodable body support
+- [ ] Header support in builder
+- [ ] MockHTTPSession for full request testing
 
 ---
 
-## 🧠 Filosofía
+## 🧠 Philosophy
 
-TypedNetwork busca que el networking en iOS sea:
+TypedNetwork aims to make iOS networking:
 
-- Declarativo
-- Tipado
-- Testeable
+- Declarative
+- Strongly typed
+- Testable
 - Extensible
-- Compatible con Swift moderno
+- Aligned with modern Swift
 
-Sin frameworks externos. Solo Swift.
+No external dependencies. Just Swift.
