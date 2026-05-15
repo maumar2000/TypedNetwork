@@ -22,20 +22,4 @@ public extension Endpoint {
     func mapError(data: Data, response: HTTPURLResponse) -> Failure {
         fatalError("Implement mapError if Failure != Never")
     }
-
-    func makeRequest(baseURL: URL) throws -> URLRequest {
-        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        components.queryItems = queryItems.isEmpty ? nil : queryItems
-
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = method.rawValue
-        if let body {
-            request.httpBody = try body.encode()
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-
-        headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-
-        return request
-    }
 }
