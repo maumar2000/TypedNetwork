@@ -1,6 +1,6 @@
 # TypedNetwork
 
-**TypedNetwork** is a Swift networking library for building **strongly-typed, composable, and testable** HTTP requests, designed to integrate naturally into modern iOS apps.
+**TypedNetwork** is a Swift networking library for building **strongly-typed, composable, and testable** HTTP requests, designed to fit naturally into modern iOS apps and fully compatible with Swift Concurrency (Swift 6 ready).
 
 The goals are:
 
@@ -14,32 +14,33 @@ The goals are:
 
 ## ✨ Current Features
 
-- ✅ Strongly-typed `Request`
+- ✅ Strongly-typed `Endpoint`
 - ✅ Declarative `RequestBuilder`
 - ✅ `HTTPSession` decoupled from `URLSession`
 - ✅ Middleware system
+- ✅ `HTTPBody` with JSON and raw data support
 - ✅ Example Auth middleware
 - ✅ Middleware unit tests (no network)
-- ✅ Fully compatible with Swift Concurrency (`async/await`)
+- ✅ Fully compatible with Swift Concurrency (`Sendable` safe)
 
 ---
 
 ## 🧱 Architecture
 
 ```
-RequestBuilder → Request → Middlewares → HTTPSession → URLSession
+RequestBuilder → Endpoint → Middlewares → HTTPSession → URLSession
 ```
 
 Each layer has a single, clear responsibility.
 
 ---
 
-## 🧩 1. Defining a Request
+## 🧩 1. Defining an Endpoint
 
-A request defines **what it expects to return**:
+An endpoint defines **what it expects to return** and optionally how it sends data.
 
 ```swift
-struct GetUserRequest: Request {
+struct GetUser: Endpoint {
     typealias Response = User
 
     var path: String { "/user" }
@@ -49,10 +50,10 @@ struct GetUserRequest: Request {
 
 ---
 
-## 🏗️ 2. Building with RequestBuilder
+## 🏗️ 2. Building a Request
 
 ```swift
-let request = RequestBuilder(GetUserRequest())
+let request = RequestBuilder(GetUser())
     .addQueryItem(name: "id", value: "123")
     .build(baseURL: baseURL)
 ```
@@ -61,7 +62,35 @@ This produces a complete, typed `URLRequest`.
 
 ---
 
-## 🧠 3. HTTPSession
+## 📦 3. HTTPBody (JSON & Raw Data)
+
+`HTTPBody` allows endpoints to send data safely and ergonomically.
+
+### JSON body
+
+```swift
+struct CreateUser: Endpoint {
+    typealias Response = User
+
+    var path: String { "/users" }
+    var method: HTTPMethod { .post }
+    var body: HTTPBody { .json(UserDTO(name: "Mauri")) }
+}
+```
+
+### Raw data body (images, files, binaries)
+
+```swift
+var body: HTTPBody {
+    .data(imageData, contentType: "image/png")
+}
+```
+
+`HTTPBody` automatically provides the correct `Content-Type` to the request.
+
+---
+
+## 🧠 4. HTTPSession
 
 `HTTPSession` is responsible for executing requests.
 
@@ -80,7 +109,7 @@ Internally it:
 
 ---
 
-## 🧪 4. Middlewares
+## 🧪 5. Middlewares
 
 Middlewares can intercept and modify a request before it is sent.
 
@@ -103,7 +132,7 @@ let session = HTTPSession(
 
 ---
 
-## 🔐 5. AuthMiddleware Example
+## 🔐 6. AuthMiddleware Example
 
 ```swift
 final class AuthMiddleware: Middleware {
@@ -124,7 +153,7 @@ final class AuthMiddleware: Middleware {
 
 ---
 
-## 🧪 6. Testing Middlewares (No Network)
+## 🧪 7. Testing Middlewares (No Network)
 
 Middlewares are tested without performing real network calls.
 
@@ -145,14 +174,15 @@ func test_authMiddleware_addsAuthorizationHeader() async throws {
 
 ---
 
-## 🧱 7. Clear Separation of Responsibilities
+## 🧱 Clear Separation of Responsibilities
 
-| Layer           | Responsibility                          |
-|-----------------|------------------------------------------|
-| `Request`       | Defines endpoint and typed response      |
-| `RequestBuilder`| Builds the `URLRequest`                 |
-| `Middleware`    | Intercepts/modifies requests             |
-| `HTTPSession`   | Executes requests                       |
+| Layer            | Responsibility                          |
+|------------------|------------------------------------------|
+| `Endpoint`       | Defines endpoint and typed response      |
+| `RequestBuilder` | Builds the `URLRequest`                 |
+| `HTTPBody`       | Encodes body and provides content type  |
+| `Middleware`     | Intercepts/modifies requests             |
+| `HTTPSession`    | Executes requests                       |
 
 ---
 
@@ -166,7 +196,7 @@ let session = HTTPSession(
     ]
 )
 
-let request = RequestBuilder(GetUserRequest())
+let request = RequestBuilder(GetUser())
     .addQueryItem(name: "id", value: "123")
     .build()
 
@@ -177,12 +207,12 @@ let user: User = try await session.execute(request)
 
 ## 📌 What’s Next
 
-Natural next improvements:
+Planned improvements:
 
+- [ ] Typed errors per endpoint
 - [ ] RetryMiddleware
 - [ ] LoggingMiddleware
 - [ ] CacheMiddleware
-- [ ] Encodable body support
 - [ ] Header support in builder
 - [ ] MockHTTPSession for full request testing
 
