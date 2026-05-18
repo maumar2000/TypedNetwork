@@ -11,27 +11,30 @@ import Testing
 
 struct HTTPBodyTests {
 
-    struct Body: Encodable, Equatable {
-        let name: String
-    }
-
     @Test
-    func encodable_body_is_encoded_to_json_data() throws {
-        let body = HTTPBody.encodable(Body(name: "Mauri"))
+    func json_body_encodes_correctly_and_sets_content_type() throws {
+        struct Body: Codable, Sendable, Equatable {
+            let name: String
+        }
+
+        let body = HTTPBody.json(Body(name: "Mauri"))
 
         let data = try body.encode()
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: String]
+        let decoded = try JSONDecoder().decode(Body.self, from: data)
 
-        #expect(json?["name"] == "Mauri")
+        #expect(decoded == Body(name: "Mauri"))
+        #expect(body.contentType == "application/json")
     }
 
     @Test
-    func data_body_returns_same_data() throws {
+    func data_body_returns_same_data_and_content_type() throws {
         let original = Data([0x01, 0x02, 0x03])
-        let body = HTTPBody.data(original)
+
+        let body = HTTPBody.data(original, contentType: "application/octet-stream")
 
         let encoded = try body.encode()
 
         #expect(encoded == original)
+        #expect(body.contentType == "application/octet-stream")
     }
 }

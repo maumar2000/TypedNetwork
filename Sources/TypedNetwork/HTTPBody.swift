@@ -7,32 +7,45 @@
 
 import Foundation
 
-public enum HTTPBody: Sendable {
-    case data(Data)
-    case encodable(Encodable & Sendable)
+public struct HTTPBody: Sendable {
+    private let encoder: @Sendable () throws -> Data
+    public let contentType: String
 
-    func encode() throws -> Data {
-        switch self {
-        case .data(let data):
-            return data
-        case .encodable(let value):
-            return try JSONEncoder().encode(AnyEncodable(value))
-        }
+    private init(
+        contentType: String,
+        encoder: @escaping @Sendable () throws -> Data
+    ) {
+        self.contentType = contentType
+        self.encoder = encoder
+    }
+
+    public func encode() throws -> Data {
+        try encoder()
     }
 }
 
-struct AnyEncodable: Sendable {
-    private let encodeFunc: @Sendable (Encoder) throws -> Void
-
-    init<T: Encodable & Sendable>(_ value: T) {
-        self.encodeFunc = { encoder in
-            try value.encode(to: encoder)
-        }
+public extension HTTPBody {
+    static func data(
+        _ data: Data,
+        contentType: String
+    ) -> HTTPBody {
+        HTTPBody(
+            contentType: contentType,
+            encoder: { data }
+        )
     }
 }
 
-extension AnyEncodable: Encodable {
-    func encode(to encoder: Encoder) throws {
-        try encodeFunc(encoder)
+public extension HTTPBody {
+    static func json<T: Encodable & Sendable>(
+        _ value: T,
+        encoder: JSONEncoder = JSONEncoder()
+    ) -> HTTPBody {
+        HTTPBody(
+            contentType: "application/json",
+            encoder: {
+                try encoder.encode(value)
+            }
+        )
     }
 }
