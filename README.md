@@ -24,6 +24,7 @@ The goals are:
 - ✅ Middleware chain with `next` transport closure
 - ✅ `HTTPBody` with JSON and raw data support
 - ✅ `AuthMiddleware` with token refresh on 401
+- ✅ `RetryMiddleware` with configurable `RetryPolicy` (max retries, delay, status predicate)
 - ✅ `MockRegistry` for endpoint-level mocking in tests
 - ✅ Fully compatible with Swift Concurrency (`Sendable` safe)
 
@@ -197,7 +198,11 @@ Register them on `APIClient`:
 let client = APIClient(
     baseURL: baseURL,
     middlewares: [
-        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken)
+        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken),
+        RetryMiddleware(policy: RetryPolicy(
+            maxRetries: 2,
+            shouldRetry: { (500...599).contains($0.statusCode) }
+        ))
     ]
 )
 ```
@@ -224,7 +229,38 @@ let client = APIClient(
 
 ---
 
-## 🧪 8. Testing
+## 🔁 8. RetryMiddleware
+
+Retries failed requests when a `RetryPolicy` says the response should be retried. Waits between attempts using Swift's `Duration`.
+
+```swift
+let policy = RetryPolicy(
+    maxRetries: 3,
+    delay: .seconds(1),
+    shouldRetry: { response in
+        (500...599).contains(response.statusCode)
+    }
+)
+
+let client = APIClient(
+    baseURL: baseURL,
+    middlewares: [RetryMiddleware(policy: policy)]
+)
+```
+
+`RetryPolicy` is `Sendable` and holds:
+
+| Field | Role |
+|-------|------|
+| `maxRetries` | Extra attempts after the first failure (not total request count) |
+| `delay` | Pause before each retry (default: 1 second) |
+| `shouldRetry` | Predicate on `HTTPURLResponse`; when it returns `false`, the last response is returned |
+
+Order middlewares deliberately: e.g. put `RetryMiddleware` **after** `AuthMiddleware` so retries run with a fresh token when auth refresh applies.
+
+---
+
+## 🧪 9. Testing
 
 ### Mock responses (no network)
 
@@ -262,6 +298,21 @@ let client = APIClient(
 
 Test middleware by calling `intercept` with a stub `next` that returns fixed `(Data, HTTPURLResponse)` values—no real network required.
 
+Example for `RetryMiddleware` (use `delay: .seconds(0)` in tests):
+
+```swift
+let policy = RetryPolicy(
+    maxRetries: 2,
+    delay: .seconds(0),
+    shouldRetry: { $0.statusCode == 500 }
+)
+let middleware = RetryMiddleware(policy: policy)
+
+let (data, response) = try await middleware.intercept(request) { _ in
+    // return synthetic (Data, HTTPURLResponse) per attempt
+}
+```
+
 ---
 
 ## 🧱 Clear Separation of Responsibilities
@@ -272,6 +323,7 @@ Test middleware by calling `intercept` with a stub `next` that returns fixed `(D
 | `RequestBuilder`   | Builds `URLRequest` from endpoint + base URL        |
 | `HTTPBody`         | Encodes body and provides content type              |
 | `Middleware`       | Intercepts/modifies requests and responses          |
+| `RetryPolicy`      | Configures retry count, delay, and retry predicate  |
 | `NetworkSession`   | Executes HTTP transport                             |
 | `ResponseDecoder`  | Decodes successful responses                        |
 | `APIClient`        | Orchestrates the full pipeline                      |
@@ -303,7 +355,12 @@ let tokenStore = TokenStore(token: accessToken)
 let client = APIClient(
     baseURL: URL(string: "https://api.myapp.com")!,
     middlewares: [
-        AuthMiddleware(tokenStore: tokenStore, refresh: refreshAccessToken)
+        AuthMiddleware(tokenStore: tokenStore, refresh: refreshAccessToken),
+        RetryMiddleware(policy: RetryPolicy(
+            maxRetries: 2,
+            delay: .seconds(1),
+            shouldRetry: { (500...599).contains($0.statusCode) }
+        ))
     ],
     decoder: JSONResponseDecoder()
 )
@@ -321,7 +378,7 @@ Planned improvements:
 - [x] Mock registry for endpoint testing
 - [x] Pluggable response decoding
 - [x] Transport abstraction (`NetworkSession`)
-- [ ] RetryMiddleware
+- [x] RetryMiddleware
 - [ ] LoggingMiddleware
 - [ ] CacheMiddleware
 
@@ -338,3 +395,5 @@ TypedNetwork aims to make iOS networking:
 - Aligned with modern Swift
 
 No external dependencies. Just Swift.
+
+**Platforms:** iOS 16+, macOS 13+ (Swift 5.9, Swift Concurrency).
