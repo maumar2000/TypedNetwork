@@ -13,6 +13,44 @@ The goals are:
 
 ---
 
+## 📦 Installation
+
+### Swift Package Manager
+
+Add TypedNetwork to your `Package.swift` dependencies:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/maumar2000/TypedNetwork.git", from: "0.1.0")
+]
+```
+
+Then add the library to your target:
+
+```swift
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(name: "TypedNetwork", package: "TypedNetwork")
+        ]
+    )
+]
+```
+
+### Xcode
+
+1. **File → Add Package Dependencies…**
+2. Enter `https://github.com/maumar2000/TypedNetwork.git`
+3. Choose version **0.1.0** (or *Up to Next Major*)
+4. Add the **TypedNetwork** product to your app target
+
+```swift
+import TypedNetwork
+```
+
+---
+
 ## ✨ Current Features
 
 - ✅ Strongly-typed `Endpoint` (path, method, headers, query, body, timeout)
@@ -529,3 +567,5 @@ TypedNetwork aims to make iOS networking:
 No external dependencies. Just Swift.
 
 **Platforms:** iOS 16+, macOS 13+ (Swift 5.9, Strict Concurrency).
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
