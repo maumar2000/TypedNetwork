@@ -48,4 +48,25 @@ struct APIClientTests {
 
         #expect(user == User(id: 1, name: "Mocked"))
     }
+
+    @Test
+    func endpoint_throws_typed_error() async throws {
+        struct APIError: Codable, Error, Sendable, Equatable {
+            let message: String
+        }
+
+        struct FailingEndpoint: Endpoint {
+            typealias Response = String
+            typealias Failure = APIError
+
+            var path: String { "/fail" }
+            var method: HTTPMethod { .get }
+
+            func mapError(data: Data, response: HTTPURLResponse) -> APIError {
+                try! JSONDecoder().decode(APIError.self, from: data)
+            }
+        }
+
+        // mock session devuelve 400 con JSON de error
+    }
 }

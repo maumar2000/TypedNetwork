@@ -2,21 +2,24 @@ import Foundation
 
 actor APIClient {
 
-    private let session: URLSession
+    private let session: NetworkSession
     private let builder: RequestBuilder
     private let mockRegistry: MockRegistry?
     private let middlewares: [any Middleware]
+    private let decoder: ResponseDecoder
 
     init(
         baseURL: URL,
-        session: URLSession = .shared,
+        session: NetworkSession = URLSession.shared,
         mockRegistry: MockRegistry? = nil,
-        middlewares: [any Middleware] = []
+        middlewares: [any Middleware] = [],
+        decoder: ResponseDecoder = JSONResponseDecoder(),
     ) {
         self.session = session
         self.builder = RequestBuilder(baseURL: baseURL)
         self.mockRegistry = mockRegistry
         self.middlewares = middlewares
+        self.decoder = decoder
     }
 
     func send<E: Endpoint>(_ endpoint: E) async throws -> E.Response {
@@ -39,7 +42,11 @@ actor APIClient {
         }
 
         if (200..<300).contains(http.statusCode) {
-            return try JSONDecoder().decode(E.Response.self, from: data)
+            return try decoder.decode(
+                data: data,
+                response: http,
+                for: endpoint
+            )
         } else {
             throw endpoint.mapError(data: data, response: http)
         }

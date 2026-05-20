@@ -8,13 +8,11 @@ struct RequestBuilder {
         var components = URLComponents(
             url: baseURL.appendingPathComponent(endpoint.path),
             resolvingAgainstBaseURL: false
-        )
+        )!
 
-        components?.queryItems = endpoint.queryItems.isEmpty ? nil : endpoint.queryItems
+        components.queryItems = endpoint.queryItems.isEmpty ? nil : endpoint.queryItems
 
-        guard let url = components?.url else {
-            throw URLError(.badURL)
-        }
+        let url = components.url!
 
         var request = URLRequest(url: url)
         request.httpMethod = endpoint.method.rawValue

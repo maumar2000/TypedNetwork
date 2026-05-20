@@ -5,22 +5,26 @@
 The goals are:
 
 - Eliminate stringly-typed endpoints
-- Model requests with strong types
+- Model requests and responses with strong types
+- Map HTTP errors to typed `Failure` values per endpoint
 - Inject middlewares (auth, logging, retry, etc.)
-- Separate request construction from execution
-- Make networking easy to test without touching `URLSession`
+- Swap transport and decoding for tests without touching production code
+- Make networking easy to test without real network calls
 
 ---
 
 ## ✨ Current Features
 
-- ✅ Strongly-typed `Endpoint`
-- ✅ Declarative `RequestBuilder`
-- ✅ `HTTPSession` decoupled from `URLSession`
-- ✅ Middleware system
+- ✅ Strongly-typed `Endpoint` (path, method, headers, query, body)
+- ✅ Typed errors per endpoint via `Failure` and `mapError`
+- ✅ `APIClient` actor as the single entry point
+- ✅ `RequestBuilder` (internal) builds `URLRequest` from endpoints
+- ✅ `NetworkSession` protocol decoupled from `URLSession`
+- ✅ Pluggable `ResponseDecoder` (default: `JSONResponseDecoder`)
+- ✅ Middleware chain with `next` transport closure
 - ✅ `HTTPBody` with JSON and raw data support
-- ✅ Example Auth middleware
-- ✅ Middleware unit tests (no network)
+- ✅ `AuthMiddleware` with token refresh on 401
+- ✅ `MockRegistry` for endpoint-level mocking in tests
 - ✅ Fully compatible with Swift Concurrency (`Sendable` safe)
 
 ---
@@ -28,7 +32,9 @@ The goals are:
 ## 🧱 Architecture
 
 ```
-RequestBuilder → Endpoint → Middlewares → HTTPSession → URLSession
+Endpoint → RequestBuilder → MiddlewareChain → NetworkSession → ResponseDecoder
+                ↑                                    ↑
+           MockRegistry (tests)              URLSession (default)
 ```
 
 Each layer has a single, clear responsibility.
@@ -37,34 +43,57 @@ Each layer has a single, clear responsibility.
 
 ## 🧩 1. Defining an Endpoint
 
-An endpoint defines **what it expects to return** and optionally how it sends data.
+An endpoint describes the request and the types for success and failure.
 
 ```swift
 struct GetUser: Endpoint {
     typealias Response = User
+    typealias Failure = APIError  // optional; defaults to Never
 
-    var path: String { "/user" }
+    let id: Int
+
+    var path: String { "/users/\(id)" }
     var method: HTTPMethod { .get }
+
+    // Optional — defaults provided by protocol extension
+    var headers: [String: String] { [:] }
+    var queryItems: [URLQueryItem] { [] }
+    var body: HTTPBody? { nil }
+
+    func mapError(data: Data, response: HTTPURLResponse) -> APIError {
+        // Decode or map server error payload
+        try! JSONDecoder().decode(APIError.self, from: data)
+    }
 }
 ```
 
+When `Failure` is `Never`, you do not need to implement `mapError`.
+
 ---
 
-## 🏗️ 2. Building a Request
+## 🚀 2. APIClient
+
+`APIClient` builds the request, runs middlewares, executes the transport, decodes success responses, and maps errors.
 
 ```swift
-let request = RequestBuilder(GetUser())
-    .addQueryItem(name: "id", value: "123")
-    .build(baseURL: baseURL)
+let client = APIClient(
+    baseURL: URL(string: "https://api.myapp.com")!,
+    session: URLSession.shared,           // conforms to NetworkSession
+    mockRegistry: nil,                    // optional, for tests
+    middlewares: [AuthMiddleware(...)],
+    decoder: JSONResponseDecoder()          // or a custom ResponseDecoder
+)
+
+let user: User = try await client.send(GetUser(id: 1))
 ```
 
-This produces a complete, typed `URLRequest`.
+On **2xx**, the client decodes `E.Response` using the injected decoder. On other status codes, it throws `endpoint.mapError(data:response:)`.
 
 ---
 
 ## 📦 3. HTTPBody (JSON & Raw Data)
 
-`HTTPBody` allows endpoints to send data safely and ergonomically.
+`HTTPBody` encodes request bodies and sets `Content-Type`.
 
 ### JSON body
 
@@ -86,135 +115,215 @@ var body: HTTPBody {
 }
 ```
 
-`HTTPBody` automatically provides the correct `Content-Type` to the request.
-
----
-
-## 🧠 4. HTTPSession
-
-`HTTPSession` is responsible for executing requests.
+Headers and query items are set on the endpoint itself:
 
 ```swift
-let session = HTTPSession(baseURL: baseURL)
-
-let user: User = try await session.execute(request)
+var headers: [String: String] { ["Authorization": "Bearer \(token)"] }
+var queryItems: [URLQueryItem] { [URLQueryItem(name: "page", value: "1")] }
 ```
 
-Internally it:
-
-1. Builds the `URLRequest`
-2. Passes it through all middlewares
-3. Executes the request
-4. Decodes the typed response
-
 ---
 
-## 🧪 5. Middlewares
+## 🔌 4. NetworkSession
 
-Middlewares can intercept and modify a request before it is sent.
+`NetworkSession` abstracts the transport layer so you can inject a stub in tests.
 
 ```swift
-public protocol Middleware {
-    func intercept(_ request: URLRequest) async throws -> URLRequest
+public protocol NetworkSession: Sendable {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse)
+}
+
+extension URLSession: NetworkSession {}
+```
+
+Example stub for unit tests:
+
+```swift
+final class StubSession: NetworkSession {
+    let data: Data
+    let response: URLResponse
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        (data, response)
+    }
 }
 ```
 
-They are injected into the session:
+---
+
+## 🧩 5. ResponseDecoder
+
+`ResponseDecoder` controls how successful responses are turned into `E.Response`. The default implementation uses `JSONDecoder`.
 
 ```swift
-let session = HTTPSession(
+public protocol ResponseDecoder: Sendable {
+    func decode<E: Endpoint>(
+        data: Data,
+        response: HTTPURLResponse,
+        for endpoint: E
+    ) throws -> E.Response
+}
+```
+
+Inject a custom decoder when you need date strategies, key decoding, or non-JSON payloads:
+
+```swift
+let client = APIClient(
+    baseURL: baseURL,
+    decoder: JSONResponseDecoder(decoder: myJSONDecoder)
+)
+```
+
+The decoder receives the raw `Data`, the `HTTPURLResponse`, and the endpoint, so you can branch on status headers or endpoint type if needed.
+
+---
+
+## 🧪 6. Middlewares
+
+Middlewares wrap the transport in an onion chain. Each middleware receives the request and a `next` closure that continues the chain.
+
+```swift
+public protocol Middleware: Sendable {
+    func intercept(
+        _ request: URLRequest,
+        next: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse)
+}
+```
+
+Register them on `APIClient`:
+
+```swift
+let client = APIClient(
     baseURL: baseURL,
     middlewares: [
-        AuthMiddleware(tokenProvider: tokenProvider)
+        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken)
     ]
 )
 ```
 
 ---
 
-## 🔐 6. AuthMiddleware Example
+## 🔐 7. AuthMiddleware
+
+Adds a Bearer token and retries once after refreshing on `401`.
 
 ```swift
-final class AuthMiddleware: Middleware {
-    private let tokenProvider: TokenProvider
+let tokenStore = TokenStore(token: "initial-token")
 
-    init(tokenProvider: TokenProvider) {
-        self.tokenProvider = tokenProvider
-    }
-
-    func intercept(_ request: URLRequest) async throws -> URLRequest {
-        var request = request
-        let token = try await tokenProvider.token()
-        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        return request
-    }
-}
+let client = APIClient(
+    baseURL: baseURL,
+    middlewares: [
+        AuthMiddleware(
+            tokenStore: tokenStore,
+            refresh: { try await fetchNewToken() }
+        )
+    ]
+)
 ```
 
 ---
 
-## 🧪 7. Testing Middlewares (No Network)
+## 🧪 8. Testing
 
-Middlewares are tested without performing real network calls.
+### Mock responses (no network)
+
+Register mocked responses per endpoint type and path:
 
 ```swift
-func test_authMiddleware_addsAuthorizationHeader() async throws {
-    let tokenProvider = MockTokenProvider(token: "abc123")
-    let middleware = AuthMiddleware(tokenProvider: tokenProvider)
+let mock = MockRegistry()
+await mock.register(GetUser(id: 1), response: User(id: 1, name: "Mocked"))
 
-    let request = URLRequest(url: URL(string: "https://example.com")!)
-    let result = try await middleware.intercept(request)
+let client = APIClient(
+    baseURL: URL(string: "https://test.com")!,
+    mockRegistry: mock
+)
 
-    XCTAssertEqual(
-        result.value(forHTTPHeaderField: "Authorization"),
-        "Bearer abc123"
-    )
-}
+let user = try await client.send(GetUser(id: 1))
+#expect(user.name == "Mocked")
 ```
+
+When a mock is registered, `APIClient` returns it immediately without hitting the session.
+
+### Stub session and custom decoder
+
+```swift
+let session = StubSession(data: jsonData, response: httpResponse)
+let decoder = StubDecoder(expected: myResponse)
+
+let client = APIClient(
+    baseURL: baseURL,
+    session: session,
+    decoder: decoder
+)
+```
+
+### Middleware in isolation
+
+Test middleware by calling `intercept` with a stub `next` that returns fixed `(Data, HTTPURLResponse)` values—no real network required.
 
 ---
 
 ## 🧱 Clear Separation of Responsibilities
 
-| Layer            | Responsibility                          |
-|------------------|------------------------------------------|
-| `Endpoint`       | Defines endpoint and typed response      |
-| `RequestBuilder` | Builds the `URLRequest`                 |
-| `HTTPBody`       | Encodes body and provides content type  |
-| `Middleware`     | Intercepts/modifies requests             |
-| `HTTPSession`    | Executes requests                       |
+| Layer              | Responsibility                                      |
+|--------------------|-----------------------------------------------------|
+| `Endpoint`         | Request shape, response type, typed error mapping   |
+| `RequestBuilder`   | Builds `URLRequest` from endpoint + base URL        |
+| `HTTPBody`         | Encodes body and provides content type              |
+| `Middleware`       | Intercepts/modifies requests and responses          |
+| `NetworkSession`   | Executes HTTP transport                             |
+| `ResponseDecoder`  | Decodes successful responses                        |
+| `APIClient`        | Orchestrates the full pipeline                      |
+| `MockRegistry`     | Returns canned responses in tests                   |
 
 ---
 
 ## 🚀 Complete Example
 
 ```swift
-let session = HTTPSession(
+struct APIError: Decodable, Error, Sendable {
+    let message: String
+}
+
+struct GetProfile: Endpoint {
+    typealias Response = User
+    typealias Failure = APIError
+
+    var path: String { "/me" }
+    var method: HTTPMethod { .get }
+
+    func mapError(data: Data, response: HTTPURLResponse) -> APIError {
+        (try? JSONDecoder().decode(APIError.self, from: data)) ?? APIError(message: "Unknown")
+    }
+}
+
+let tokenStore = TokenStore(token: accessToken)
+
+let client = APIClient(
     baseURL: URL(string: "https://api.myapp.com")!,
     middlewares: [
-        AuthMiddleware(tokenProvider: tokenProvider)
-    ]
+        AuthMiddleware(tokenStore: tokenStore, refresh: refreshAccessToken)
+    ],
+    decoder: JSONResponseDecoder()
 )
 
-let request = RequestBuilder(GetUser())
-    .addQueryItem(name: "id", value: "123")
-    .build()
-
-let user: User = try await session.execute(request)
+let user = try await client.send(GetProfile())
 ```
 
 ---
 
-## 📌 What’s Next
+## 📌 What's Next
 
 Planned improvements:
 
-- [ ] Typed errors per endpoint
+- [x] Typed errors per endpoint
+- [x] Mock registry for endpoint testing
+- [x] Pluggable response decoding
+- [x] Transport abstraction (`NetworkSession`)
 - [ ] RetryMiddleware
 - [ ] LoggingMiddleware
 - [ ] CacheMiddleware
-- [ ] Header support in builder
-- [ ] MockHTTPSession for full request testing
 
 ---
 
