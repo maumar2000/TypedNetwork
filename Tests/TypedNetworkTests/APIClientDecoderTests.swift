@@ -124,7 +124,7 @@ func send_throws_typed_error_when_status_not_2xx() async {
         session: session
     )
 
-    await #expect(throws: DummyError.self) {
+    await #expect(throws: NetworkError.self) {
         try await client.send(DummyFailingEndpoint())
     }
 }
@@ -140,7 +140,7 @@ func send_throws_when_response_is_not_http() async {
         session: session
     )
 
-    await #expect(throws: URLError.self) {
+    await #expect(throws: NetworkError.self) {
         try await client.send(DummyEndpoint())
     }
 }

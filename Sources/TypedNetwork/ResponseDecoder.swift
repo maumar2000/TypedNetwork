@@ -27,6 +27,10 @@ public struct JSONResponseDecoder: ResponseDecoder {
         response: HTTPURLResponse,
         for endpoint: E
     ) throws -> E.Response {
-        try decoder.decode(E.Response.self, from: data)
+        if E.Response.self == EmptyResponse.self {
+            return EmptyResponse() as! E.Response
+        }
+
+        return try decoder.decode(E.Response.self, from: data)
     }
 }

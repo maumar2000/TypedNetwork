@@ -3,6 +3,12 @@ import Foundation
 struct RequestBuilder {
 
     let baseURL: URL
+    let modifiers: [any RequestModifier]
+
+    init(baseURL: URL, modifiers: [any RequestModifier] = []) {
+        self.baseURL = baseURL
+        self.modifiers = modifiers
+    }
 
     func build<E: Endpoint>(from endpoint: E) throws -> URLRequest {
         var components = URLComponents(
@@ -25,6 +31,22 @@ struct RequestBuilder {
             request.httpBody = try body.encode()
         }
 
+        if let timeout = endpoint.timeout {
+            request.timeoutInterval = timeout.timeInterval
+        }
+
+        for modifier in modifiers {
+            request = modifier.modify(request)
+        }
+
         return request
+    }
+}
+
+private extension Duration {
+    var timeInterval: TimeInterval {
+        let seconds = TimeInterval(components.seconds)
+        let attoseconds = TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+        return seconds + attoseconds
     }
 }

@@ -13,10 +13,11 @@ actor APIClient {
         session: NetworkSession = URLSession.shared,
         mockRegistry: MockRegistry? = nil,
         middlewares: [any Middleware] = [],
+        requestModifiers: [any RequestModifier] = [],
         decoder: ResponseDecoder = JSONResponseDecoder(),
     ) {
         self.session = session
-        self.builder = RequestBuilder(baseURL: baseURL)
+        self.builder = RequestBuilder(baseURL: baseURL, modifiers: requestModifiers)
         self.mockRegistry = mockRegistry
         self.middlewares = middlewares
         self.decoder = decoder
@@ -31,24 +32,42 @@ actor APIClient {
 
         let chain = MiddlewareChain(middlewares)
 
-        let (data, http) = try await chain.execute(
-            request: request
-        ) { request in
-            let (data, response) = try await self.session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
+        do {
+            let (data, http) = try await chain.execute(
+                request: request
+            ) { request in
+                do {
+                    let (data, response) = try await self.session.data(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw NetworkError.transport(URLError(.badServerResponse))
+                    }
+                    return (data, http)
+                } catch let error as NetworkError {
+                    throw error
+                } catch let error as URLError {
+                    throw NetworkError.transport(error)
+                }
             }
-            return (data, http)
-        }
 
-        if (200..<300).contains(http.statusCode) {
-            return try decoder.decode(
-                data: data,
-                response: http,
-                for: endpoint
-            )
-        } else {
-            throw endpoint.mapError(data: data, response: http)
+            if (200..<300).contains(http.statusCode) {
+                do {
+                    return try decoder.decode(
+                        data: data,
+                        response: http,
+                        for: endpoint
+                    )
+                } catch {
+                    throw NetworkError.decoding(error)
+                }
+            } else {
+                throw NetworkError.endpoint(
+                    endpoint.mapError(data: data, response: http)
+                )
+            }
+        } catch let error as NetworkError {
+            throw error
+        } catch let error as URLError {
+            throw NetworkError.transport(error)
         }
     }
 }

@@ -10,6 +10,7 @@ public protocol Endpoint: Sendable {
     var headers: [String: String] { get }
     var queryItems: [URLQueryItem] { get }
     var body: HTTPBody? { get }
+    var timeout: Duration? { get }
 
     func mapError(data: Data, response: HTTPURLResponse) -> Failure
 }
@@ -18,6 +19,7 @@ public extension Endpoint {
     var headers: [String: String] { [:] }
     var queryItems: [URLQueryItem] { [] }
     var body: HTTPBody? { nil }
+    var timeout: Duration? { nil }
 
     func mapError(data: Data, response: HTTPURLResponse) -> Failure {
         fatalError("Implement mapError if Failure != Never")

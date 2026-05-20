@@ -15,17 +15,21 @@ The goals are:
 
 ## ✨ Current Features
 
-- ✅ Strongly-typed `Endpoint` (path, method, headers, query, body)
+- ✅ Strongly-typed `Endpoint` (path, method, headers, query, body, timeout)
 - ✅ Typed errors per endpoint via `Failure` and `mapError`
+- ✅ Unified `NetworkError` (`transport`, `decoding`, `endpoint`)
 - ✅ `APIClient` actor as the single entry point
 - ✅ `RequestBuilder` (internal) builds `URLRequest` from endpoints
+- ✅ `RequestModifier` for composable request customization
 - ✅ `NetworkSession` protocol decoupled from `URLSession`
 - ✅ Pluggable `ResponseDecoder` (default: `JSONResponseDecoder`)
+- ✅ `EmptyResponse` for 204 / no-body endpoints
 - ✅ Middleware chain with `next` transport closure
 - ✅ `HTTPBody` with JSON and raw data support
 - ✅ `AuthMiddleware` with token refresh on 401
-- ✅ `RetryMiddleware` with configurable `RetryPolicy` (max retries, delay, status predicate)
-- ✅ `MockRegistry` for endpoint-level mocking in tests
+- ✅ `RetryMiddleware` with configurable `RetryPolicy` (HTTP-status based)
+- ✅ `LoggingMiddleware` for request/response diagnostics
+- ✅ `MockMiddleware` and `MockRegistry` for test doubles
 - ✅ Fully compatible with Swift Concurrency (`Sendable` safe)
 
 ---
@@ -34,8 +38,10 @@ The goals are:
 
 ```
 Endpoint → RequestBuilder → MiddlewareChain → NetworkSession → ResponseDecoder
-                ↑                                    ↑
-           MockRegistry (tests)              URLSession (default)
+                ↑                    ↑
+        RequestModifier      MockMiddleware / Auth / Retry / Logging
+                ↑
+           MockRegistry (tests, optional)
 ```
 
 Each layer has a single, clear responsibility.
@@ -60,6 +66,7 @@ struct GetUser: Endpoint {
     var headers: [String: String] { [:] }
     var queryItems: [URLQueryItem] { [] }
     var body: HTTPBody? { nil }
+    var timeout: Duration? { .seconds(30) }
 
     func mapError(data: Data, response: HTTPURLResponse) -> APIError {
         // Decode or map server error payload
@@ -70,6 +77,24 @@ struct GetUser: Endpoint {
 
 When `Failure` is `Never`, you do not need to implement `mapError`.
 
+### Empty responses (204)
+
+Use `EmptyResponse` when the API returns no body:
+
+```swift
+struct DeleteUser: Endpoint {
+    typealias Response = EmptyResponse
+    typealias Failure = Never
+
+    let id: Int
+
+    var path: String { "/users/\(id)" }
+    var method: HTTPMethod { .delete }
+}
+```
+
+`JSONResponseDecoder` returns `EmptyResponse()` automatically when `E.Response` is `EmptyResponse`.
+
 ---
 
 ## 🚀 2. APIClient
@@ -79,16 +104,44 @@ When `Failure` is `Never`, you do not need to implement `mapError`.
 ```swift
 let client = APIClient(
     baseURL: URL(string: "https://api.myapp.com")!,
-    session: URLSession.shared,           // conforms to NetworkSession
-    mockRegistry: nil,                    // optional, for tests
-    middlewares: [AuthMiddleware(...)],
-    decoder: JSONResponseDecoder()          // or a custom ResponseDecoder
+    session: URLSession.shared,              // conforms to NetworkSession
+    mockRegistry: nil,                       // optional, for tests
+    middlewares: [
+        LoggingMiddleware(),
+        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken),
+        RetryMiddleware(policy: .default)
+    ],
+    requestModifiers: [UserAgentModifier()], // optional
+    decoder: JSONResponseDecoder()           // or a custom ResponseDecoder
 )
 
 let user: User = try await client.send(GetUser(id: 1))
 ```
 
-On **2xx**, the client decodes `E.Response` using the injected decoder. On other status codes, it throws `endpoint.mapError(data:response:)`.
+On **2xx**, the client decodes `E.Response` using the injected decoder.
+
+On failure, `APIClient` throws `NetworkError`:
+
+| Case | When |
+|------|------|
+| `.transport(URLError)` | Network or invalid HTTP response |
+| `.decoding(Error)` | Response body could not be decoded |
+| `.endpoint(Error)` | Non-2xx status; wraps `endpoint.mapError(...)` |
+
+```swift
+do {
+    let user = try await client.send(GetUser(id: 1))
+} catch let error as NetworkError {
+    switch error {
+    case .transport(let urlError):
+        print(urlError)
+    case .decoding(let underlying):
+        print(underlying)
+    case .endpoint(let apiError):
+        print(apiError) // your typed Failure
+    }
+}
+```
 
 ---
 
@@ -125,7 +178,29 @@ var queryItems: [URLQueryItem] { [URLQueryItem(name: "page", value: "1")] }
 
 ---
 
-## 🔌 4. NetworkSession
+## 🔧 4. RequestModifier
+
+`RequestModifier` lets you apply cross-cutting changes to every request without duplicating logic in each endpoint.
+
+```swift
+public protocol RequestModifier: Sendable {
+    func modify(_ request: URLRequest) -> URLRequest
+}
+
+struct UserAgentModifier: RequestModifier {
+    func modify(_ request: URLRequest) -> URLRequest {
+        var modified = request
+        modified.setValue("MyApp/1.0", forHTTPHeaderField: "User-Agent")
+        return modified
+    }
+}
+```
+
+Modifiers run inside `RequestBuilder` after the endpoint fields (method, headers, body, timeout) are applied.
+
+---
+
+## 🔌 5. NetworkSession
 
 `NetworkSession` abstracts the transport layer so you can inject a stub in tests.
 
@@ -152,7 +227,7 @@ final class StubSession: NetworkSession {
 
 ---
 
-## 🧩 5. ResponseDecoder
+## 🧩 6. ResponseDecoder
 
 `ResponseDecoder` controls how successful responses are turned into `E.Response`. The default implementation uses `JSONDecoder`.
 
@@ -179,7 +254,7 @@ The decoder receives the raw `Data`, the `HTTPURLResponse`, and the endpoint, so
 
 ---
 
-## 🧪 6. Middlewares
+## 🧪 7. Middlewares
 
 Middlewares wrap the transport in an onion chain. Each middleware receives the request and a `next` closure that continues the chain.
 
@@ -198,6 +273,7 @@ Register them on `APIClient`:
 let client = APIClient(
     baseURL: baseURL,
     middlewares: [
+        LoggingMiddleware(),
         AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken),
         RetryMiddleware(policy: RetryPolicy(
             maxRetries: 2,
@@ -207,9 +283,11 @@ let client = APIClient(
 )
 ```
 
+Retry decisions are based on `HTTPURLResponse`, not thrown errors.
+
 ---
 
-## 🔐 7. AuthMiddleware
+## 🔐 8. AuthMiddleware
 
 Adds a Bearer token and retries once after refreshing on `401`.
 
@@ -229,9 +307,9 @@ let client = APIClient(
 
 ---
 
-## 🔁 8. RetryMiddleware
+## 🔁 9. RetryMiddleware
 
-Retries failed requests when a `RetryPolicy` says the response should be retried. Waits between attempts using Swift's `Duration`.
+Retries when a `RetryPolicy` predicate matches the `HTTPURLResponse`. Waits between attempts using Swift's `Duration`.
 
 ```swift
 let policy = RetryPolicy(
@@ -248,8 +326,6 @@ let client = APIClient(
 )
 ```
 
-`RetryPolicy` is `Sendable` and holds:
-
 | Field | Role |
 |-------|------|
 | `maxRetries` | Extra attempts after the first failure (not total request count) |
@@ -260,11 +336,33 @@ Order middlewares deliberately: e.g. put `RetryMiddleware` **after** `AuthMiddle
 
 ---
 
-## 🧪 9. Testing
+## 📋 10. LoggingMiddleware
 
-### Mock responses (no network)
+Logs outgoing requests and incoming responses without touching business logic.
 
-Register mocked responses per endpoint type and path:
+```swift
+let client = APIClient(
+    baseURL: baseURL,
+    middlewares: [
+        LoggingMiddleware() // defaults to print(_:)
+    ]
+)
+
+// Custom sink (e.g. os.Logger)
+LoggingMiddleware { message in
+    logger.debug("\(message)")
+}
+```
+
+Output includes method, URL, headers, status code, and elapsed duration.
+
+---
+
+## 🧪 11. Testing
+
+### MockRegistry (endpoint-level)
+
+Register typed responses per endpoint; `APIClient` returns them before any network call.
 
 ```swift
 let mock = MockRegistry()
@@ -279,7 +377,30 @@ let user = try await client.send(GetUser(id: 1))
 #expect(user.name == "Mocked")
 ```
 
-When a mock is registered, `APIClient` returns it immediately without hitting the session.
+### MockMiddleware (request-level)
+
+Short-circuit the middleware chain without a registry — useful in app or integration tests:
+
+```swift
+let client = APIClient(
+    baseURL: URL(string: "https://test.com")!,
+    middlewares: [
+        MockMiddleware { request in
+            guard request.url?.path.hasSuffix("/users") == true else { return nil }
+            let data = #"{"id":1,"name":"Mocked"}"#.data(using: .utf8)!
+            let http = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (data, http)
+        }
+    ]
+)
+```
+
+Return `nil` from the handler to fall through to the real transport.
 
 ### Stub session and custom decoder
 
@@ -298,8 +419,6 @@ let client = APIClient(
 
 Test middleware by calling `intercept` with a stub `next` that returns fixed `(Data, HTTPURLResponse)` values—no real network required.
 
-Example for `RetryMiddleware` (use `delay: .seconds(0)` in tests):
-
 ```swift
 let policy = RetryPolicy(
     maxRetries: 2,
@@ -317,17 +436,19 @@ let (data, response) = try await middleware.intercept(request) { _ in
 
 ## 🧱 Clear Separation of Responsibilities
 
-| Layer              | Responsibility                                      |
-|--------------------|-----------------------------------------------------|
-| `Endpoint`         | Request shape, response type, typed error mapping   |
-| `RequestBuilder`   | Builds `URLRequest` from endpoint + base URL        |
-| `HTTPBody`         | Encodes body and provides content type              |
-| `Middleware`       | Intercepts/modifies requests and responses          |
-| `RetryPolicy`      | Configures retry count, delay, and retry predicate  |
-| `NetworkSession`   | Executes HTTP transport                             |
-| `ResponseDecoder`  | Decodes successful responses                        |
-| `APIClient`        | Orchestrates the full pipeline                      |
-| `MockRegistry`     | Returns canned responses in tests                   |
+| Layer | Responsibility |
+|-------|----------------|
+| `Endpoint` | Request shape, response type, timeout, typed error mapping |
+| `RequestBuilder` | Builds `URLRequest` from endpoint + base URL + modifiers |
+| `RequestModifier` | Cross-cutting `URLRequest` customization |
+| `HTTPBody` | Encodes body and provides content type |
+| `Middleware` | Intercepts/modifies requests and responses |
+| `RetryPolicy` | Configures retry count, delay, and retry predicate |
+| `NetworkSession` | Executes HTTP transport |
+| `ResponseDecoder` | Decodes successful responses |
+| `NetworkError` | Unified error surface from `APIClient` |
+| `APIClient` | Orchestrates the full pipeline |
+| `MockRegistry` / `MockMiddleware` | Returns canned responses in tests |
 
 ---
 
@@ -344,6 +465,7 @@ struct GetProfile: Endpoint {
 
     var path: String { "/me" }
     var method: HTTPMethod { .get }
+    var timeout: Duration? { .seconds(15) }
 
     func mapError(data: Data, response: HTTPURLResponse) -> APIError {
         (try? JSONDecoder().decode(APIError.self, from: data)) ?? APIError(message: "Unknown")
@@ -355,6 +477,7 @@ let tokenStore = TokenStore(token: accessToken)
 let client = APIClient(
     baseURL: URL(string: "https://api.myapp.com")!,
     middlewares: [
+        LoggingMiddleware(),
         AuthMiddleware(tokenStore: tokenStore, refresh: refreshAccessToken),
         RetryMiddleware(policy: RetryPolicy(
             maxRetries: 2,
@@ -362,24 +485,33 @@ let client = APIClient(
             shouldRetry: { (500...599).contains($0.statusCode) }
         ))
     ],
+    requestModifiers: [UserAgentModifier()],
     decoder: JSONResponseDecoder()
 )
 
-let user = try await client.send(GetProfile())
+do {
+    let user = try await client.send(GetProfile())
+} catch let error as NetworkError {
+    // handle transport / decoding / endpoint uniformly
+    print(error)
+}
 ```
 
 ---
 
 ## 📌 What's Next
 
-Planned improvements:
-
 - [x] Typed errors per endpoint
-- [x] Mock registry for endpoint testing
+- [x] Unified `NetworkError`
+- [x] Mock registry and `MockMiddleware`
 - [x] Pluggable response decoding
+- [x] `EmptyResponse` support
 - [x] Transport abstraction (`NetworkSession`)
-- [x] RetryMiddleware
-- [ ] LoggingMiddleware
+- [x] `RequestModifier`
+- [x] Per-endpoint timeout
+- [x] `AuthMiddleware`
+- [x] `RetryMiddleware`
+- [x] `LoggingMiddleware`
 - [ ] CacheMiddleware
 
 ---
@@ -396,4 +528,4 @@ TypedNetwork aims to make iOS networking:
 
 No external dependencies. Just Swift.
 
-**Platforms:** iOS 16+, macOS 13+ (Swift 5.9, Swift Concurrency).
+**Platforms:** iOS 16+, macOS 13+ (Swift 5.9, Strict Concurrency).

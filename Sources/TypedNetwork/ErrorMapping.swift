@@ -1,7 +1,7 @@
 import Foundation
 
 public enum NetworkError: Error {
-    case invalidResponse
+    case transport(URLError)
     case decoding(Error)
-    case transport(Error)
+    case endpoint(Error)
 }
