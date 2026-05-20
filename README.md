@@ -539,17 +539,6 @@ do {
 
 ## 📌 What's Next
 
-- [x] Typed errors per endpoint
-- [x] Unified `NetworkError`
-- [x] Mock registry and `MockMiddleware`
-- [x] Pluggable response decoding
-- [x] `EmptyResponse` support
-- [x] Transport abstraction (`NetworkSession`)
-- [x] `RequestModifier`
-- [x] Per-endpoint timeout
-- [x] `AuthMiddleware`
-- [x] `RetryMiddleware`
-- [x] `LoggingMiddleware`
 - [ ] CacheMiddleware
 
 ---
