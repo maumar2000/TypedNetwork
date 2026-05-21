@@ -13,6 +13,7 @@ import Testing
 struct AuthMiddlewareTests {
 
     actor Counter {
+
         private var value = 0
 
         func increment() {
@@ -24,42 +25,131 @@ struct AuthMiddlewareTests {
         }
     }
 
+    private struct MockTokenProvider: TokenProvider {
+
+        let token: String
+        let refreshedToken: String?
+
+        init(
+            token: String,
+            refreshedToken: String? = nil
+        ) {
+            self.token = token
+            self.refreshedToken = refreshedToken
+        }
+
+        func validToken() async throws -> String {
+            token
+        }
+
+        func forceRefresh() async throws -> String {
+            refreshedToken ?? token
+        }
+    }
+
     @Test
-    func auth_middleware_refreshes_token_on_401() async throws {
-        let store = TokenStore(token: "old")
-        let counter = Counter()
+    func auth_middleware_adds_authorization_header() async throws {
+
+        let provider = MockTokenProvider(
+            token: "valid-token"
+        )
 
         let middleware = AuthMiddleware(
-            tokenStore: store,
-            refresh: {
-                "new"
-            }
+            tokenProvider: provider
         )
 
         let chain = MiddlewareChain([middleware])
 
-        let request = URLRequest(url: URL(string: "https://test.com")!)
+        let request = URLRequest(
+            url: URL(string: "https://test.com")!
+        )
 
-        _ = try await chain.execute(request: request) { req in
+        let (_, response) = try await chain.execute(
+            request: request
+        ) { req in
+
+            #expect(
+                req.value(forHTTPHeaderField: "Authorization")
+                == "Bearer valid-token"
+            )
+
+            return (
+                Data(),
+                HTTPURLResponse(
+                    url: req.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+            )
+        }
+
+        #expect(response.statusCode == 200)
+    }
+
+    @Test
+    func auth_middleware_refreshes_token_after_401() async throws {
+
+        let provider = MockTokenProvider(
+            token: "expired-token",
+            refreshedToken: "new-token"
+        )
+
+        let middleware = AuthMiddleware(
+            tokenProvider: provider
+        )
+
+        let chain = MiddlewareChain([middleware])
+
+        let request = URLRequest(
+            url: URL(string: "https://test.com")!
+        )
+
+        let counter = Counter()
+
+        let (_, response) = try await chain.execute(
+            request: request
+        ) { req in
+
             await counter.increment()
+
             let current = await counter.get()
 
             if current == 1 {
-                #expect(req.value(forHTTPHeaderField: "Authorization") == "Bearer old")
-                return (
-                    Data(),
-                    HTTPURLResponse(url: req.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+
+                #expect(
+                    req.value(forHTTPHeaderField: "Authorization")
+                    == "Bearer expired-token"
                 )
-            } else {
-                #expect(req.value(forHTTPHeaderField: "Authorization") == "Bearer new")
+
                 return (
                     Data(),
-                    HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                    HTTPURLResponse(
+                        url: req.url!,
+                        statusCode: 401,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
                 )
             }
+
+            #expect(
+                req.value(forHTTPHeaderField: "Authorization")
+                == "Bearer new-token"
+            )
+
+            return (
+                Data(),
+                HTTPURLResponse(
+                    url: req.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+            )
         }
 
         #expect(await counter.get() == 2)
+        #expect(response.statusCode == 200)
     }
-
 }

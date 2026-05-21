@@ -64,7 +64,8 @@ import TypedNetwork
 - ✅ `EmptyResponse` for 204 / no-body endpoints
 - ✅ Middleware chain with `next` transport closure
 - ✅ `HTTPBody` with JSON and raw data support
-- ✅ `AuthMiddleware` with token refresh on 401
+- ✅ `AuthMiddleware` with `TokenProvider` (proactive refresh + retry on 401)
+- ✅ `AuthToken`, `TokenStore`, and `RefreshingTokenProvider` for token lifecycle
 - ✅ `RetryMiddleware` with configurable `RetryPolicy` (HTTP-status based)
 - ✅ `LoggingMiddleware` for request/response diagnostics
 - ✅ `MockMiddleware` and `MockRegistry` for test doubles
@@ -146,7 +147,7 @@ let client = APIClient(
     mockRegistry: nil,                       // optional, for tests
     middlewares: [
         LoggingMiddleware(),
-        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken),
+        AuthMiddleware(tokenProvider: tokenProvider),
         RetryMiddleware(policy: .default)
     ],
     requestModifiers: [UserAgentModifier()], // optional
@@ -312,7 +313,7 @@ let client = APIClient(
     baseURL: baseURL,
     middlewares: [
         LoggingMiddleware(),
-        AuthMiddleware(tokenStore: tokenStore, refresh: refreshToken),
+        AuthMiddleware(tokenProvider: tokenProvider),
         RetryMiddleware(policy: RetryPolicy(
             maxRetries: 2,
             shouldRetry: { (500...599).contains($0.statusCode) }
@@ -325,23 +326,65 @@ Retry decisions are based on `HTTPURLResponse`, not thrown errors.
 
 ---
 
-## 🔐 8. AuthMiddleware
+## 🔐 8. Authentication
 
-Adds a Bearer token and retries once after refreshing on `401`.
+Auth is split into a **token provider** (when to refresh) and **`AuthMiddleware`** (how to attach the token and react to `401`).
+
+### AuthToken & TokenStore
+
+`AuthToken` carries the access token and its expiration. `TokenStore` is an actor that holds the current token in memory.
 
 ```swift
-let tokenStore = TokenStore(token: "initial-token")
+let token = AuthToken(
+    accessToken: "eyJ…",
+    expiration: Date().addingTimeInterval(3600)
+)
 
+let store = TokenStore(token: token)
+
+await store.set(newToken)
+await store.clear()
+```
+
+`AuthToken` exposes `isExpired` and `expiresSoon(threshold:)` (default threshold: 60 seconds) for proactive refresh.
+
+### TokenProvider & RefreshingTokenProvider
+
+`TokenProvider` is the abstraction `AuthMiddleware` uses:
+
+| Method | Role |
+|--------|------|
+| `validToken()` | Returns a token valid for the next request; refreshes when missing, expired, or expiring soon |
+| `forceRefresh()` | Always fetches a new token (used after `401`) |
+
+`RefreshingTokenProvider` implements both methods: it reads from `TokenStore`, calls your refresh closure, deduplicates concurrent `validToken()` refreshes, and bypasses coalescing on `forceRefresh()` so a server `401` always triggers a new fetch.
+
+```swift
+let provider = RefreshingTokenProvider(store: store) {
+    let response = try await authService.refresh()
+    return AuthToken(
+        accessToken: response.accessToken,
+        expiration: response.expiresAt
+    )
+}
+```
+
+Implement `TokenProvider` yourself when you need a custom strategy (e.g. static token for tests).
+
+### AuthMiddleware
+
+Injects `Authorization: Bearer …` on every request. On `401`, calls `forceRefresh()` and retries the request **once** with the new token.
+
+```swift
 let client = APIClient(
     baseURL: baseURL,
     middlewares: [
-        AuthMiddleware(
-            tokenStore: tokenStore,
-            refresh: { try await fetchNewToken() }
-        )
+        AuthMiddleware(tokenProvider: provider)
     ]
 )
 ```
+
+If the retry also returns `401`, that response is returned as-is (no further auth retries).
 
 ---
 
@@ -482,6 +525,9 @@ let (data, response) = try await middleware.intercept(request) { _ in
 | `HTTPBody` | Encodes body and provides content type |
 | `Middleware` | Intercepts/modifies requests and responses |
 | `RetryPolicy` | Configures retry count, delay, and retry predicate |
+| `AuthToken` / `TokenStore` | Token model and in-memory storage |
+| `TokenProvider` / `RefreshingTokenProvider` | Valid token + refresh lifecycle |
+| `AuthMiddleware` | Bearer header injection and 401 retry |
 | `NetworkSession` | Executes HTTP transport |
 | `ResponseDecoder` | Decodes successful responses |
 | `NetworkError` | Unified error surface from `APIClient` |
@@ -510,13 +556,17 @@ struct GetProfile: Endpoint {
     }
 }
 
-let tokenStore = TokenStore(token: accessToken)
+let store = TokenStore(token: initialAuthToken)
+
+let tokenProvider = RefreshingTokenProvider(store: store) {
+    try await refreshAccessToken() // must return AuthToken
+}
 
 let client = APIClient(
     baseURL: URL(string: "https://api.myapp.com")!,
     middlewares: [
         LoggingMiddleware(),
-        AuthMiddleware(tokenStore: tokenStore, refresh: refreshAccessToken),
+        AuthMiddleware(tokenProvider: tokenProvider),
         RetryMiddleware(policy: RetryPolicy(
             maxRetries: 2,
             delay: .seconds(1),
@@ -548,6 +598,7 @@ do {
 - [x] `RequestModifier`
 - [x] Per-endpoint timeout
 - [x] `AuthMiddleware`
+- [x] `AuthToken`, `TokenProvider`, and `RefreshingTokenProvider`
 - [x] `RetryMiddleware`
 - [x] `LoggingMiddleware`
 - [ ] CacheMiddleware

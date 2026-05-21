@@ -7,21 +7,23 @@
 
 import Foundation
 
-import Foundation
-
 public actor TokenStore {
 
-    private var token: String
+    private var token: AuthToken?
 
-    public init(token: String) {
+    public init(token: AuthToken? = nil) {
         self.token = token
     }
 
-    public func get() -> String {
+    public func get() -> AuthToken? {
         token
     }
 
-    public func set(_ new: String) {
+    public func set(_ new: AuthToken) {
         token = new
+    }
+
+    public func clear() {
+        token = nil
     }
 }
