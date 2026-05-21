@@ -18,14 +18,8 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-     - name: Install xcpretty
-       run: gem install xcpretty
-
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies
+      - name: Install xcpretty
+        run: gem install xcpretty
 
       - name: Run tests
         run: |
