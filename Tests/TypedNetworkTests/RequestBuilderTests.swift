@@ -8,6 +8,9 @@
 import Testing
 @testable import TypedNetwork
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 struct RequestBuilderTests {
 
