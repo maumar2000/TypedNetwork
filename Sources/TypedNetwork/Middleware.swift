@@ -10,10 +10,10 @@ public protocol Middleware: Sendable {
     ) async throws -> (Data, HTTPURLResponse)
 }
 
-public struct MiddlewareChain: Sendable {
+struct MiddlewareChain: Sendable {
     private let middlewares: [any Middleware]
 
-    public init(_ middlewares: [any Middleware]) {
+    init(_ middlewares: [any Middleware]) {
         self.middlewares = middlewares
     }
 
