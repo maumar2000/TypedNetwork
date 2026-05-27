@@ -6,18 +6,18 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct AuthMiddleware: Middleware {
 
-    private let tokenStore: TokenStore
-    private let refresh: @Sendable () async throws -> String
+    private let tokenProvider: any TokenProvider
 
     public init(
-        tokenStore: TokenStore,
-        refresh: @escaping @Sendable () async throws -> String
+        tokenProvider: any TokenProvider
     ) {
-        self.tokenStore = tokenStore
-        self.refresh = refresh
+        self.tokenProvider = tokenProvider
     }
 
     public func intercept(
@@ -25,18 +25,29 @@ public struct AuthMiddleware: Middleware {
         next: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     ) async throws -> (Data, HTTPURLResponse) {
 
+        let token = try await tokenProvider.validToken()
+
         var authorized = request
-        let token = await tokenStore.get()
-        authorized.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        authorized.setValue(
+            "Bearer \(token)",
+            forHTTPHeaderField: "Authorization"
+        )
 
         let (data, response) = try await next(authorized)
 
+        // Edge case:
+        // invalid token or revoken suddenly
         if response.statusCode == 401 {
-            let newToken = try await refresh()
-            await tokenStore.set(newToken)
+
+            let refreshed = try await tokenProvider.forceRefresh()
 
             var retry = request
-            retry.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+
+            retry.setValue(
+                "Bearer \(refreshed)",
+                forHTTPHeaderField: "Authorization"
+            )
 
             return try await next(retry)
         }

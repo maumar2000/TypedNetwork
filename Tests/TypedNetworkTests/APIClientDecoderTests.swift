@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import TypedNetwork
 
@@ -131,7 +134,7 @@ func send_throws_typed_error_when_status_not_2xx() async {
 
 @Test
 func send_throws_when_response_is_not_http() async {
-    let response = URLResponse()
+    let response = URLResponse(url: URL(string: "https://test.com")!, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)
 
     let session = StubSession(data: Data(), response: response)
 
