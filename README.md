@@ -21,7 +21,7 @@ Add TypedNetwork to your `Package.swift` dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/maumar2000/TypedNetwork.git", from: "0.1.0")
+    .package(url: "https://github.com/maumar2000/TypedNetwork.git", from: "0.2.0")
 ]
 ```
 
@@ -42,7 +42,7 @@ targets: [
 
 1. **File → Add Package Dependencies…**
 2. Enter `https://github.com/maumar2000/TypedNetwork.git`
-3. Choose version **0.1.0** (or *Up to Next Major*)
+3. Choose version **0.2.0** (or *Up to Next Major*)
 4. Add the **TypedNetwork** product to your app target
 
 ```swift
