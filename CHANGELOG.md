@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-28
+
 ### Added
 
 - `AuthToken` model with `accessToken`, `expiration`, `isExpired`, and `expiresSoon(threshold:)`
@@ -62,7 +64,7 @@ AuthMiddleware(tokenProvider: provider)
 - `EmptyResponse` for 204 / no-body endpoints
 - Unified `NetworkError` (`transport`, `decoding`, `endpoint`) mapped by `APIClient`
 - Middleware chain with `next` transport closure pattern
-- `AuthMiddleware` with Bearer token injection and refresh on 401 (superseded in Unreleased by `TokenProvider`-based auth)
+- `AuthMiddleware` with Bearer token injection and refresh on 401 (superseded in 0.2.0 by `TokenProvider`-based auth)
 - `RetryMiddleware` and `RetryPolicy` (HTTP-status based retries with `Duration` delay)
 - `LoggingMiddleware` for request URL, method, headers, status, and duration
 - `MockMiddleware` and `MockRegistry` for test doubles without real network calls
@@ -76,5 +78,6 @@ AuthMiddleware(tokenProvider: provider)
 - macOS 13+
 - Swift 5.9+
 
-[Unreleased]: https://github.com/maumar2000/TypedNetwork/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/maumar2000/TypedNetwork/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/maumar2000/TypedNetwork/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/maumar2000/TypedNetwork/releases/tag/0.1.0
