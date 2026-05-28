@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-actor APIClient {
+public actor APIClient {
 
     private let session: NetworkSession
     private let builder: RequestBuilder
@@ -11,7 +11,7 @@ actor APIClient {
     private let middlewares: [any Middleware]
     private let decoder: ResponseDecoder
 
-    init(
+    public init(
         baseURL: URL,
         session: NetworkSession = URLSession.shared,
         mockRegistry: MockRegistry? = nil,
@@ -26,7 +26,7 @@ actor APIClient {
         self.decoder = decoder
     }
 
-    func send<E: Endpoint>(_ endpoint: E) async throws -> E.Response {
+    public func send<E: Endpoint>(_ endpoint: E) async throws -> E.Response {
         if let mock = await mockRegistry?.response(for: endpoint) as? E.Response {
             return mock
         }
